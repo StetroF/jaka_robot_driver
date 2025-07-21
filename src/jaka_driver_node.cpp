@@ -3,11 +3,13 @@
 #include "jaka_robot_interfaces/srv/multi_mov_j.hpp"
 #include "jaka_robot_interfaces/srv/multi_mov_l.hpp"
 #include "jaka_robot_interfaces/srv/servo_mov_j.hpp"
+#include "jaka_robot_interfaces/srv/joint_to_cartesian.hpp"
 #include "jaka_robot_interfaces/msg/joint_value.hpp"
 #include "jaka_robot_interfaces/msg/cartesian_pose.hpp"
 #include "jaka_robot_interfaces/msg/robot_state_dual.hpp"
 #include "jaka_robot_interfaces/msg/servo_joint_command.hpp"
 #include "jaka_robot_interfaces/msg/servo_cart_command.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 #include <thread>
 #include <mutex>
 #include <cmath>
@@ -219,8 +221,14 @@ public:
         srv_mov_l = this->create_service<jaka_robot_interfaces::srv::MultiMovL>(
             "multi_movl", std::bind(&JakaDriverNode::handle_multi_movl, this, std::placeholders::_1, std::placeholders::_2));
 
-        publisher_ = this->create_publisher<jaka_robot_interfaces::msg::RobotStateDual>("robot_state_dual", 10);
+        srv_joint_to_cartesian_ = this->create_service<jaka_robot_interfaces::srv::JointToCartesian>(
+            "joint_to_cartesian", std::bind(&JakaDriverNode::handle_joint_to_cartesian, this, std::placeholders::_1, std::placeholders::_2));
 
+        publisher_ = this->create_publisher<jaka_robot_interfaces::msg::RobotStateDual>("robot_state_dual", 10);
+        
+        clear_error_srv_ = this->create_service<std_srvs::srv::SetBool>(
+            "clear_error", std::bind(&JakaDriverNode::handle_clear_error, this, std::placeholders::_1, std::placeholders::_2));
+        
         timer_ = this->create_wall_timer(
             std::chrono::milliseconds(100),
             std::bind(&JakaDriverNode::timer_callback, this));
@@ -263,6 +271,15 @@ public:
     }
 
 private:
+    void handle_clear_error(
+        const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+        std::shared_ptr<std_srvs::srv::SetBool::Response> response)
+    {
+        robot_->clear_error();
+        RCLCPP_INFO(this->get_logger(), "Error cleared.");
+        response->success = true;
+    }
+
     void handle_multi_movj(
         const std::shared_ptr<jaka_robot_interfaces::srv::MultiMovJ::Request> request,
         std::shared_ptr<jaka_robot_interfaces::srv::MultiMovJ::Response> response)
@@ -346,6 +363,60 @@ private:
             response->ret_code = -1;
             response->message = "Failed to execute multi-linear motion";
             RCLCPP_ERROR(this->get_logger(), "Error while executing multi-linear motion");
+        }
+    }
+
+    void handle_joint_to_cartesian(
+        const std::shared_ptr<jaka_robot_interfaces::srv::JointToCartesian::Request> request,
+        std::shared_ptr<jaka_robot_interfaces::srv::JointToCartesian::Response> response)
+    {
+        // 验证机器人ID
+        if (request->robot_id > 1)
+        {
+            response->success = false;
+            response->message = "Invalid robot_id. Must be 0 (left arm) or 1 (right arm).";
+            RCLCPP_ERROR(this->get_logger(), "Invalid robot_id: %d", request->robot_id);
+            return;
+        }
+
+        // 将ROS消息转换为SDK结构
+        JointValue joint_pos;
+        memset(&joint_pos, 0, sizeof(joint_pos));
+        
+        for (int i = 0; i < 7; ++i)
+        {
+            joint_pos.jVal[i] = request->joint_value.joint_values[i];
+        }
+
+        // 调用正运动学函数
+        CartesianPose cartesian_pose;
+        memset(&cartesian_pose, 0, sizeof(cartesian_pose));
+        
+        errno_t ret = robot_->kine_forward(request->robot_id, &joint_pos, &cartesian_pose);
+        
+        if (ret == 0)
+        {
+            // 转换成功，填充响应
+            response->cartesian_pose.x = cartesian_pose.tran.x;
+            response->cartesian_pose.y = cartesian_pose.tran.y;
+            response->cartesian_pose.z = cartesian_pose.tran.z;
+            response->cartesian_pose.rx = cartesian_pose.rpy.rx;
+            response->cartesian_pose.ry = cartesian_pose.rpy.ry;
+            response->cartesian_pose.rz = cartesian_pose.rpy.rz;
+            
+            response->success = true;
+            response->message = "Forward kinematics calculation successful";
+            
+            RCLCPP_INFO(this->get_logger(), "Forward kinematics for robot %d: pos=(%.3f, %.3f, %.3f), rot=(%.3f, %.3f, %.3f)",
+                        request->robot_id,
+                        response->cartesian_pose.x, response->cartesian_pose.y, response->cartesian_pose.z,
+                        response->cartesian_pose.rx, response->cartesian_pose.ry, response->cartesian_pose.rz);
+        }
+        else
+        {
+            response->success = false;
+            response->message = "Forward kinematics calculation failed";
+            RCLCPP_ERROR(this->get_logger(), "Forward kinematics failed for robot %d, error code: %d", request->robot_id, ret);
         }
     }
 
@@ -620,6 +691,8 @@ private:
     rclcpp::Service<jaka_robot_interfaces::srv::MultiMovJ>::SharedPtr srv_mov_j;
     rclcpp::Service<jaka_robot_interfaces::srv::ServoMovJ>::SharedPtr srv_servo_j;
     rclcpp::Service<jaka_robot_interfaces::srv::MultiMovL>::SharedPtr srv_mov_l;
+    rclcpp::Service<jaka_robot_interfaces::srv::JointToCartesian>::SharedPtr srv_joint_to_cartesian_;
+    rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr clear_error_srv_;
     rclcpp::Publisher<jaka_robot_interfaces::msg::RobotStateDual>::SharedPtr publisher_;
     rclcpp::TimerBase::SharedPtr timer_;
     // rclcpp::Subscription<ServoJointCommand>::SharedPtr cmd_sub_;
