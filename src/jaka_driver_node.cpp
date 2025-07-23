@@ -14,6 +14,8 @@
 #include <mutex>
 #include <cmath>
 #include <atomic>
+#include <deque>
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 
 #define deg2rad(x) ((x) * M_PI / 180.0)
 #ifndef AXIS_NUM
@@ -23,16 +25,40 @@
 using std::placeholders::_1;
 using ServoJointCommand = jaka_robot_interfaces::msg::ServoJointCommand;
 
+
+
 class JakaDriverNode : public rclcpp::Node
 {
 public:
     JakaDriverNode() : Node("jaka_driver_node")
     {
+        // 初始化参数
+
+        // 所有参数在开头声明
+        this->declare_parameter<int>("servo_mode_enable", 1); // 1:开, 0:关
+        this->declare_parameter<double>("servo_joint_vel", 15.0);
+        this->declare_parameter<double>("servo_joint_acc", 8.0);
+        this->declare_parameter<double>("servo_joint_jerk", 8.0);
+        this->declare_parameter<bool>("servo_joint_test_mode", true);
+        this->declare_parameter<bool>("servo_cart_test_mode", false);
+
+
+        current_servo_vel_ = this->get_parameter("servo_joint_vel").as_double();
+        current_servo_acc_ = this->get_parameter("servo_joint_acc").as_double();
+        current_servo_jerk_ = this->get_parameter("servo_joint_jerk").as_double();
+        RCLCPP_INFO(this->get_logger(), "伺服速度: %.3f, 伺服加速度: %.3f, 伺服加加速度: %.3f", current_servo_vel_, current_servo_acc_, current_servo_jerk_);
+        
         robot_ = std::make_shared<JAKAZuRobot>();
+
         int ret = robot_->login_in("192.168.2.200"); // 示例 IP
+        robot_->servo_move_use_none_filter();
+        robot_->motion_abort();
+        robot_->servo_move_enable(0, -1);
+
+
         if (ret == 0)
         {
-            RCLCPP_INFO(this->get_logger(), "Connected to robot.");
+            RCLCPP_INFO(this->get_logger(), "Connected to robot!.");
         }
         else
         {
@@ -72,95 +98,33 @@ public:
             return;
         }
 
+
+
         // 设置碰撞检测级别
         robot_->set_collision_level(LEFT, 4);  // 设置左臂碰撞级别
         robot_->set_collision_level(RIGHT, 4); // 设置右臂碰撞级别
         RCLCPP_INFO(this->get_logger(), "Collision level set to 4.");
 
-        // 参数决定是否伺服测试模式
-        // this->declare_parameter<bool>("servo_test_mode", false);
-        // bool servo_test = this->get_parameter("servo_test_mode").as_bool();
 
-        this->declare_parameter<bool>("servo_joint_test_mode", false);
+        
         bool servo_joint = this->get_parameter("servo_joint_test_mode").as_bool();
-
+        RCLCPP_INFO(this->get_logger(), "伺服模式: %d", servo_joint);
         if (servo_joint)
         {
             JointValue init_pos[2];
             memset(&init_pos, 0, sizeof(init_pos));
+            //
             double v[] = {deg2rad(30), deg2rad(30)};
             double a[] = {deg2rad(150), deg2rad(150)};
             MoveMode mode[] = {MoveMode::ABS, MoveMode::ABS};
             robot_->robot_run_multi_movj(DUAL, mode, true, init_pos, v, a);
-            RCLCPP_INFO(this->get_logger(), "Moved to zero position for servo test.");
+            RCLCPP_INFO(this->get_logger(), "伺服模式下回到初始位置.");
 
             servo_thread_ = std::thread(&JakaDriverNode::servo_loop, this);
         }
 
-        // this->declare_parameter<bool>("servo_cart_test_mode", false);
-        // bool servo_cart = this->get_parameter("servo_cart_test_mode").as_bool();
 
-        // if (servo_cart)
-        // {
-        //     // Step 1: 获取目标笛卡尔位姿
-        //     CartesianPose cpos[2];
-        //     JointValue jpos[2];
-        //     memset(&cpos, 0, sizeof(cpos));
-        //     memset(&jpos, 0, sizeof(jpos));
 
-        //     // 设置左臂关节角度（使用你提供的数据）
-        //     jpos[0].jVal[0] = deg2rad(-74);
-        //     jpos[0].jVal[1] = deg2rad(-5);
-        //     jpos[0].jVal[2] = deg2rad(67);
-        //     jpos[0].jVal[3] = deg2rad(-51);
-        //     jpos[0].jVal[4] = deg2rad(2);
-        //     jpos[0].jVal[5] = deg2rad(-40);
-        //     jpos[0].jVal[6] = deg2rad(-20);
-
-        //     memcpy(&jpos[1], &jpos[0], sizeof(jpos[0]));
-
-        //     {
-        //         std::lock_guard<std::mutex> lock(pose_mutex_);
-        //         // 左臂目标位姿
-        //         cpos[0].tran.x = pose_cmd_.end_pose_left.x;
-        //         cpos[0].tran.y = pose_cmd_.end_pose_left.y;
-        //         cpos[0].tran.z = pose_cmd_.end_pose_left.z;
-        //         cpos[0].rpy.rx = pose_cmd_.end_pose_left.rx;
-        //         cpos[0].rpy.ry = pose_cmd_.end_pose_left.ry;
-        //         cpos[0].rpy.rz = pose_cmd_.end_pose_left.rz;
-
-        //         // 右臂目标位姿
-        //         cpos[1].tran.x = pose_cmd_.end_pose_right.x;
-        //         cpos[1].tran.y = pose_cmd_.end_pose_right.y;
-        //         cpos[1].tran.z = pose_cmd_.end_pose_right.z;
-        //         cpos[1].rpy.rx = pose_cmd_.end_pose_right.rx;
-        //         cpos[1].rpy.ry = pose_cmd_.end_pose_right.ry;
-        //         cpos[1].rpy.rz = pose_cmd_.end_pose_right.rz;
-        //     }
-
-        //     // Step 2: 进行逆解，获得关节位姿
-        //     int ret_l = robot_->kine_inverse(0, nullptr, &cpos[0], &jpos[0]);
-        //     int ret_r = robot_->kine_inverse(1, nullptr, &cpos[1], &jpos[1]);
-
-        //     if (ret_l != 0 || ret_r != 0)
-        //     {
-        //         RCLCPP_ERROR(this->get_logger(), "Inverse kinematics failed: left=%d right=%d", ret_l, ret_r);
-        //     }
-        //     else
-        //     {
-        //         double v[] = {deg2rad(10), deg2rad(10)};
-        //         double a[] = {deg2rad(50), deg2rad(50)};
-        //         MoveMode mode[] = {MoveMode::ABS, MoveMode::ABS};
-
-        //         // Step 3: 控制机器人先走到目标 pose 的位置（通过关节方式）
-        //         robot_->robot_run_multi_movj(DUAL, mode, true, jpos, v, a);
-        //         RCLCPP_INFO(this->get_logger(), "Moved to Cartesian target for servo_p test.");
-        //     }
-
-        //     // Step 4: 启动伺服线程
-        //     servo_pose_thread_ = std::thread(&JakaDriverNode::servo_loop_pose, this);
-        // }
-        this->declare_parameter<bool>("servo_cart_test_mode", false);
         bool servo_cart = this->get_parameter("servo_cart_test_mode").as_bool();
         if (servo_cart)
         {
@@ -240,8 +204,11 @@ public:
             "/servo_cart_command", 10,
             std::bind(&JakaDriverNode::servo_cart_command_callback, this, std::placeholders::_1));
 
-        // 启动伺服循环线程
-        // servo_thread_ = std::thread(&JakaDriverNode::servo_loop, this);
+
+        parameter_callback_handle_ = this->add_on_set_parameters_callback(
+            std::bind(&JakaDriverNode::dynamic_parameter_callback, this, std::placeholders::_1));
+
+
 
         // 启动后台错误检测线程
         error_check_thread_ = std::thread(&JakaDriverNode::error_monitor_loop, this);
@@ -250,7 +217,7 @@ public:
         // 断开连接
         // robot_->login_out();
         // RCLCPP_INFO(this->get_logger(), "Logged out from robot.");
-        robot_->clear_error();
+        // robot_->clear_error();
     }
 
 public:
@@ -269,8 +236,117 @@ public:
         }
         RCLCPP_INFO(this->get_logger(), "JakaDriverNode shutting down.");
     }
-
+    void check_return(int ret, const std::string& func_name) {
+        if (ret != 0) {
+            RCLCPP_ERROR(this->get_logger(), "%s failed, return value: %d", func_name.c_str(), ret);
+        }
+    }
 private:
+
+    rcl_interfaces::msg::SetParametersResult dynamic_parameter_callback(const std::vector<rclcpp::Parameter> &params)
+    {
+        rcl_interfaces::msg::SetParametersResult result;
+        result.successful = true;
+        result.reason = "ok";
+        for (const auto &param : params)
+        {
+            if (param.get_name() == "servo_mode_enable")
+            {
+                int mode = param.as_int();
+                if (mode != current_servo_mode_)
+                {
+                    int ret = robot_->servo_move_enable(mode, -1);
+                    if (ret == 0)
+                    {
+                        current_servo_mode_ = mode;
+                        RCLCPP_INFO(this->get_logger(), "[动态参数] 伺服模式已%s", mode ? "开启" : "关闭");
+                    }
+                    else
+                    {
+                        result.successful = false;
+                        result.reason = "servo_move_enable调用失败";
+                        RCLCPP_ERROR(this->get_logger(), "servo_move_enable(%d, -1) 失败, ret=%d", mode, ret);
+                    }
+                }
+            }
+            if (param.get_name() == "servo_joint_vel")
+            {
+                double v = param.as_double();
+                if (current_servo_mode_ == 1)
+                {
+                    RCLCPP_WARN(this->get_logger(), "[动态参数] 伺服模式下不能设置速度参数，请先关闭伺服模式");
+                    result.successful = false;
+                    result.reason = "伺服模式下不能设置速度";
+                }
+                else
+                {
+                    int ret = robot_->servo_move_use_joint_NLF(v, current_servo_acc_, current_servo_jerk_);
+                    if (ret == 0)
+                    {
+                        current_servo_vel_ = v;
+                        RCLCPP_INFO(this->get_logger(), "[动态参数] 伺服速度已设置为%.3f", v);
+                    }
+                    else
+                    {
+                        result.successful = false;
+                        result.reason = "servo_move_use_joint_NLF调用失败";
+                        RCLCPP_ERROR(this->get_logger(), "servo_move_use_joint_NLF(%.3f, %.3f, %.3f) 失败, ret=%d", v, current_servo_acc_, current_servo_jerk_, ret);
+                    }
+                }
+            }
+            if (param.get_name() == "servo_joint_acc")
+            {
+                double a = param.as_double();
+                if (current_servo_mode_ == 1)
+                {
+                    RCLCPP_WARN(this->get_logger(), "[动态参数] 伺服模式下不能设置加速度参数，请先关闭伺服模式");
+                    result.successful = false;
+                    result.reason = "伺服模式下不能设置加速度";
+                }
+                else
+                {
+                    int ret = robot_->servo_move_use_joint_NLF(current_servo_vel_, a, current_servo_jerk_);
+                    if (ret == 0)
+                    {
+                        current_servo_acc_ = a;
+                        RCLCPP_INFO(this->get_logger(), "[动态参数] 伺服加速度已设置为%.3f", a);
+                    }
+                    else
+                    {
+                        result.successful = false;
+                        result.reason = "servo_move_use_joint_NLF调用失败";
+                        RCLCPP_ERROR(this->get_logger(), "servo_move_use_joint_NLF(%.3f, %.3f, %.3f) 失败, ret=%d", current_servo_vel_, a, current_servo_jerk_, ret);
+                    }
+                }
+            }
+            if (param.get_name() == "servo_joint_jerk")
+            {
+                double j = param.as_double();
+                if (current_servo_mode_ == 1)
+                {
+                    RCLCPP_WARN(this->get_logger(), "[动态参数] 伺服模式下不能设置加加速度参数，请先关闭伺服模式");
+                    result.successful = false;
+                    result.reason = "伺服模式下不能设置加加速度";
+                }
+                else
+                {
+                    int ret = robot_->servo_move_use_joint_NLF(current_servo_vel_, current_servo_acc_, j);
+                    if (ret == 0)
+                    {
+                        current_servo_jerk_ = j;
+                        RCLCPP_INFO(this->get_logger(), "[动态参数] 伺服加加速度已设置为%.3f", j);
+                    }
+                    else
+                    {
+                        result.successful = false;
+                        result.reason = "servo_move_use_joint_NLF调用失败";
+                        RCLCPP_ERROR(this->get_logger(), "servo_move_use_joint_NLF(%.3f, %.3f, %.3f) 失败, ret=%d", current_servo_vel_, current_servo_acc_, j, ret);
+                    }
+                }
+            }
+        }
+        return result;
+    }
     void handle_clear_error(
         const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
         std::shared_ptr<std_srvs::srv::SetBool::Response> response)
@@ -444,6 +520,9 @@ private:
             CartesianPose cartesian_pose;
 
             ret = robot_->edg_get_stat(robot_index, &joint_pos, &cartesian_pose);
+            auto &target = (robot_index == 0) ? jpos_left_ : jpos_right_;
+            target = joint_pos;
+            
             if (ret != 0)
             {
                 RCLCPP_WARN(this->get_logger(), "edg_get_stat failed for arm %d: %d", robot_index, ret);
@@ -471,64 +550,172 @@ private:
 
     void servo_callback(const jaka_robot_interfaces::msg::ServoJointCommand::SharedPtr msg)
     {
-        // std::lock_guard<std::mutex> lock(cmd_mutex_);
-        // latest_cmd_ = msg;
-        std::lock_guard<std::mutex> lock(servo_mutex_);
-        joint_cmd_left_ = msg->joint_pos_left;
-        joint_cmd_right_ = msg->joint_pos_right;
+        // 直接保存最新指令，无需加锁
+        latest_joint_cmd_left_ = msg->joint_pos_left;
+        latest_joint_cmd_right_ = msg->joint_pos_right;
+        has_new_cmd_ = true;
     }
 
     void servo_loop()
     {
+
+        // std::this_thread::sleep_for(std::chrono::seconds(5));    
+
         sched_param sch;
         sch.sched_priority = 90;
         pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch);
 
-        robot_->servo_move_use_none_filter();
-        robot_->servo_move_enable(1, -1);
+
+        robot_->servo_move_use_joint_NLF(360.0, 360.0, 720.0);
+        // robot_->servo_move_use_joint_MMF(20, 0.2, 0.4, 0.2); 
+        // robot_->servo_move_use_joint_LPF(0.25);
+
         int ret = robot_->servo_move_enable(1, -1);
+       
         if (ret != 0)
         {
             RCLCPP_ERROR(this->get_logger(), "servo_move_enable failed, ret = %d", ret);
+            return;
         }
         else
         {
             RCLCPP_INFO(this->get_logger(), "servo_move_enable success.");
         }
-
-        timespec next;
+        // return;
+        timespec next;  
         clock_gettime(CLOCK_REALTIME, &next);
 
-        while (rclcpp::ok() && running_joint_)
+
+        // while (rclcpp::ok() && running_joint_) {
+        //     robot_->edg_recv(&next);
+        //     JointValue jpos_left, jpos_right;
+        //     bool has_data = false;
+        
+        //     // 检查是否有新指令
+        //     if (has_new_cmd_) {
+        //         memset(&jpos_left, 0, sizeof(jpos_left));
+        //         memset(&jpos_right, 0, sizeof(jpos_right));
+        
+        //         // 计算 left 和 right 的差值
+        //         double max_diff_left = 0.0;
+        //         double max_diff_right = 0.0;
+        
+        //         // 找到差值最大的关节
+        //         for (int i = 0; i < AXIS_NUM; ++i) {
+        //             double diff_left = std::abs(latest_joint_cmd_left_.joint_values[i] - jpos_left_.jVal[i]);
+        //             double diff_right = std::abs(latest_joint_cmd_right_.joint_values[i] - jpos_right_.jVal[i]);
+        
+        //             if (diff_left > max_diff_left) max_diff_left = diff_left;
+        //             if (diff_right > max_diff_right) max_diff_right = diff_right;
+        //         }
+        //         double step_size = 0.005;
+        //         // 如果差值大于 step_size，则拆分数据
+        //         if (max_diff_left > step_size || max_diff_right > step_size) {
+        //             // 计算需要拆分的步数
+        //             int steps = std::max(
+        //                 static_cast<int>(std::ceil(max_diff_left / step_size)),
+        //                 static_cast<int>(std::ceil(max_diff_right / step_size))
+        //             );
+        
+        //             // 逐步插值并发送指令
+        //             for (int step = 1; step <= steps; ++step) {
+        //                 // 插值计算当前步的关节值
+        //                 for (int i = 0; i < AXIS_NUM; ++i) {
+        //                     jpos_left.jVal[i] = jpos_left_.jVal[i] + 
+        //                         (latest_joint_cmd_left_.joint_values[i] - jpos_left_.jVal[i]) * step / steps;
+        //                     jpos_right.jVal[i] = jpos_right_.jVal[i] + 
+        //                         (latest_joint_cmd_right_.joint_values[i] - jpos_right_.jVal[i]) * step / steps;
+        //                 }
+        
+        //                 // 发送指令
+        //                 int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
+        //                 // int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
+        
+        //                 // 记录日志（可选）
+        //                 if (step == steps) {
+        //                     RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
+        //                                 jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
+        //                                 jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6]);
+        //                 }
+        
+        //                 // 发送数据
+        //                 robot_->edg_send();
+        
+        //                 // 等待下一个周期
+        //                 timespec dt;
+        //                 dt.tv_nsec = 1000000; // 1ms
+        //                 dt.tv_sec = 0;
+        //                 next = timespec_add(next, dt);
+        //                 clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+        //             }
+        //         } else {
+        //             // 差值小于等于 step_size，直接发送
+        //             for (int i = 0; i < AXIS_NUM; ++i) {
+        //                 jpos_left.jVal[i] = latest_joint_cmd_left_.joint_values[i];
+        //                 jpos_right.jVal[i] = latest_joint_cmd_right_.joint_values[i];
+        //             }
+        
+        //             int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
+        //             // int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
+        
+        //             RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
+        //                         jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
+        //                         jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6]);
+        
+        //             robot_->edg_send();
+        //         }
+        
+        //         has_data = true;
+        //         has_new_cmd_ = false; // 指令已处理
+        //     }
+        
+        //     // 如果没有新指令，继续等待
+        //     if (!has_data) {
+        //         timespec dt;
+        //         dt.tv_nsec = 1000000; // 1ms
+        //         dt.tv_sec = 0;
+        //         next = timespec_add(next, dt);
+        //         clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+        //     }
+        // }
+        
+
+        while (rclcpp::ok() && running_joint_ )
         {
             robot_->edg_recv(&next);
-
             JointValue jpos_left, jpos_right;
+            bool has_data = false;
+            // 直接读取最新指令，无需加锁
+            if (has_new_cmd_)
             {
-                std::lock_guard<std::mutex> lock(servo_mutex_);
                 memset(&jpos_left, 0, sizeof(jpos_left));
                 memset(&jpos_right, 0, sizeof(jpos_right));
-
                 for (int i = 0; i < AXIS_NUM; ++i)
                 {
-                    jpos_left.jVal[i] = joint_cmd_left_.joint_values[i];
-                    jpos_right.jVal[i] = joint_cmd_right_.joint_values[i];
+                    jpos_left.jVal[i] = latest_joint_cmd_left_.joint_values[i];
+                    jpos_right.jVal[i] = latest_joint_cmd_right_.joint_values[i];
                 }
+                has_data = true;
+                has_new_cmd_ = false; // 只下发一次，等新指令
             }
-            // robot_->edg_servo_j(0, reinterpret_cast<JAKAZu::JointValue *>(&jpos_l), MoveMode::ABS);
-            robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
-
-            // robot_->edg_servo_j(1, reinterpret_cast<JAKAZu::JointValue *>(&jpos_r), MoveMode::ABS);
-            robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
-            RCLCPP_INFO(this->get_logger(), "Sending servo cmd: left[0]=%.3f right[0]=%.3f",
-                        jpos_left.jVal[0], jpos_right.jVal[0]);
-
-            robot_->edg_send();
-
-            timespec dt{0, 8000000};
+            if (has_data)
+            {
+                int ret = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
+                // ret = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
+                RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
+                            jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
+                            jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6]);
+                robot_->edg_send();
+            }
+            timespec dt;
+            dt.tv_nsec = 8000000;
+            dt.tv_sec = 0;
             next = timespec_add(next, dt);
-            clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, nullptr);
+            clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
         }
+
+
+
     }
 
     void servo_cart_command_callback(const jaka_robot_interfaces::msg::ServoCartCommand::SharedPtr msg)
@@ -594,6 +781,8 @@ private:
     // }
     void servo_loop_pose_left()
     {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+
         sched_param sch;
         sch.sched_priority = 90;
         pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch);
@@ -703,9 +892,12 @@ private:
     // jaka_robot_interfaces::msg::ServoJointCommand::SharedPtr latest_cmd_;
     // std::mutex cmd_mutex_;
     // == 伺服相关状态 ==
-    ServoJointCommand::_joint_pos_left_type joint_cmd_left_;
-    ServoJointCommand::_joint_pos_right_type joint_cmd_right_;
-    std::mutex servo_mutex_;   // 关节伺服互斥锁
+    // std::deque<ServoJointCommand::_joint_pos_left_type> joint_cmd_left_queue_;
+    // std::deque<ServoJointCommand::_joint_pos_right_type> joint_cmd_right_queue_;
+    // std::mutex servo_mutex_;   // 关节伺服互斥锁
+    ServoJointCommand::_joint_pos_left_type latest_joint_cmd_left_{};
+    ServoJointCommand::_joint_pos_right_type latest_joint_cmd_right_{};
+    std::atomic<bool> has_new_cmd_{false};
     std::thread servo_thread_; // 关节伺服循环线程
 
     jaka_robot_interfaces::msg::ServoCartCommand pose_cmd_; // 笛卡尔伺服目标
@@ -714,13 +906,25 @@ private:
 
     std::atomic<bool> running_joint_{true};
     std::atomic<bool> running_pose_{true};
+    OnSetParametersCallbackHandle::SharedPtr parameter_callback_handle_;
+    int current_servo_mode_ = 1; // 1:开, 0:关
+    double current_servo_vel_ = 15.0;
+    double current_servo_acc_ = 8.0;
+    double current_servo_jerk_ = 8.0;
+
+    JointValue jpos_left_;
+    JointValue jpos_right_;
 };
+
 
 int main(int argc, char **argv)
 {
+    //使用multithreadexecutor
     rclcpp::init(argc, argv);
     auto node = std::make_shared<JakaDriverNode>();
-    rclcpp::spin(node);
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+    executor.spin();
     rclcpp::shutdown();
     return 0;
 }
