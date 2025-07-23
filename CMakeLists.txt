@@ -11,53 +11,63 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(jaka_robot_interfaces REQUIRED)
 find_package(std_srvs REQUIRED)
-# 头文件路径（SDK头文件 + ROS2头）
+
+# 公共头文件路径
 include_directories(
   include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/jaka_robot_driver
 )
 
-# 库文件路径
-link_directories(
-  ${CMAKE_CURRENT_SOURCE_DIR}/out/shared # libjakaAPI_2_3_0_7.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/lib # libprotobuf.so 等
+# 公共库路径
+set(LIBRARY_DIRS
+  ${CMAKE_CURRENT_SOURCE_DIR}/out/shared  # libjakaAPI_2_3_0_7.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/lib         # libprotobuf.so 等
 )
+link_directories(${LIBRARY_DIRS})
 
-# 添加你的源文件（示例）
-add_executable(jaka_driver_node
-  src/jaka_driver_node.cpp
-)
-
-
-# 链接库
-target_link_libraries(jaka_driver_node
+# 公共链接库
+set(COMMON_LIBS
   jakaAPI_2_3_0_7
   protobuf
   pthread
 )
 
-
-
-# 设置运行时库路径（否则运行时找不到 .so）
-set_target_properties(jaka_driver_node PROPERTIES
-  BUILD_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/lib:${CMAKE_CURRENT_SOURCE_DIR}/out/shared"
-  INSTALL_RPATH "${CMAKE_CURRENT_SOURCE_DIR}/lib:${CMAKE_CURRENT_SOURCE_DIR}/out/shared"
-)
-
-
-# 依赖 ROS2
-ament_target_dependencies(jaka_driver_node
+# 公共 ROS2 依赖
+set(ROS2_DEPS
   rclcpp
   std_msgs
   jaka_robot_interfaces
   std_srvs
 )
 
+# 定义函数：添加可执行文件并配置
+function(add_jaka_executable target_name source_file)
+  add_executable(${target_name} ${source_file})
+  target_link_libraries(${target_name} ${COMMON_LIBS})
+  set_target_properties(${target_name} PROPERTIES
+    BUILD_RPATH "${LIBRARY_DIRS}"
+    INSTALL_RPATH "${LIBRARY_DIRS}"
+  )
+  ament_target_dependencies(${target_name} ${ROS2_DEPS})
+  install(TARGETS ${target_name} DESTINATION lib/${PROJECT_NAME})
+endfunction()
 
+# 添加节点
+add_jaka_executable(jaka_driver_node src/jaka_driver_node.cpp)
+add_jaka_executable(test_servo_move src/test_servo_move.cpp)
+# 安装头文件
+install(DIRECTORY include/ DESTINATION include/)
 
-# 安装头文件（如果你要编写 wrapper）
-install(DIRECTORY include/
-  DESTINATION include/
+# 安装launch文件
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
+# 安装配置文件
+install(DIRECTORY
+  config
+  DESTINATION share/${PROJECT_NAME}
 )
 
 ament_package()
