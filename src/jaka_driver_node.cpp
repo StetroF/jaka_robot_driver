@@ -40,12 +40,13 @@ public:
         this->declare_parameter<double>("servo_joint_acc", 240.0);
         this->declare_parameter<double>("servo_joint_jerk", 720.0);
         this->declare_parameter<bool>("servo_cart_test_mode", false);
-
+        this->declare_parameter<double>("joint_interpolation_step_size", 0.05);
 
         current_servo_vel_ = this->get_parameter("servo_joint_vel").as_double();
         current_servo_acc_ = this->get_parameter("servo_joint_acc").as_double();
         current_servo_jerk_ = this->get_parameter("servo_joint_jerk").as_double();
-        RCLCPP_INFO(this->get_logger(), "伺服速度: %.3f, 伺服加速度: %.3f, 伺服加加速度: %.3f", current_servo_vel_, current_servo_acc_, current_servo_jerk_);
+        joint_interpolation_step_size_ = this->get_parameter("joint_interpolation_step_size").as_double();
+        RCLCPP_INFO(this->get_logger(), "伺服速度: %.3f, 伺服加速度: %.3f, 伺服加加速度: %.3f, 关节插补步长: %.3f", current_servo_vel_, current_servo_acc_, current_servo_jerk_, joint_interpolation_step_size_);
         
         robot_ = std::make_shared<JAKAZuRobot>();
 
@@ -587,40 +588,146 @@ private:
         clock_gettime(CLOCK_REALTIME, &next);
 
 
-
-        while (rclcpp::ok() && running_joint_ )
-        {
+        while (rclcpp::ok() && running_joint_) {
+            
+            // 这个while循环主要用来接收伺服请求并执行运动的(有做关节插补)
+            // 1. 接收伺服请求
+            // 2. 计算接收到的left和right的相对于当前关节角度的差值，并计算差值最大的关节
+            // 3. 如果差值大于joint_interpolation_step_size_，则拆分数据，并逐步插值并发送指令
+            // 4. 如果没有新指令，则继续等待
+            // 5. 如果差值小于等于joint_interpolation_step_size_，直接发送
+            // 7. 发送数据
+            
             robot_->edg_recv(&next);
             JointValue jpos_left, jpos_right;
             bool has_data = false;
-            // 直接读取最新指令，无需加锁
-            if (has_new_cmd_)
-            {
+        
+            // 检查是否有新指令
+            if (has_new_cmd_) {
                 memset(&jpos_left, 0, sizeof(jpos_left));
                 memset(&jpos_right, 0, sizeof(jpos_right));
-                for (int i = 0; i < AXIS_NUM; ++i)
-                {
-                    jpos_left.jVal[i] = latest_joint_cmd_left_.joint_values[i];
-                    jpos_right.jVal[i] = latest_joint_cmd_right_.joint_values[i];
+        
+                // 计算 left 和 right 的差值
+                double max_diff_left = 0.0;
+                double max_diff_right = 0.0;
+        
+                // 找到差值最大的关节
+                for (int i = 0; i < AXIS_NUM; ++i) {
+                    double diff_left = std::abs(latest_joint_cmd_left_.joint_values[i] - jpos_left_.jVal[i]);
+                    double diff_right = std::abs(latest_joint_cmd_right_.joint_values[i] - jpos_right_.jVal[i]);
+        
+                    if (diff_left > max_diff_left) max_diff_left = diff_left;
+                    if (diff_right > max_diff_right) max_diff_right = diff_right;
                 }
-                has_data = true;
-                has_new_cmd_ = false; // 只下发一次，等新指令
-            }
-            if (has_data)
-            {
-                int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
-                int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
-                RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, ret_left: %d, ret_right: %d",
+                // 如果差值大于 step_size，则拆分数据
+                if (max_diff_left > joint_interpolation_step_size_ || max_diff_right > joint_interpolation_step_size_) {
+                    // 计算需要拆分的步数
+                    int steps = std::max(
+                        static_cast<int>(std::ceil(max_diff_left / joint_interpolation_step_size_)),
+                        static_cast<int>(std::ceil(max_diff_right / joint_interpolation_step_size_))
+                    );
+        
+                    // 逐步插值并发送指令
+                    for (int step = 1; step <= steps; ++step) {
+                        // 插值计算当前步的关节值
+                        for (int i = 0; i < AXIS_NUM; ++i) {
+                            jpos_left.jVal[i] = jpos_left_.jVal[i] + 
+                                (latest_joint_cmd_left_.joint_values[i] - jpos_left_.jVal[i]) * step / steps;
+                            jpos_right.jVal[i] = jpos_right_.jVal[i] + 
+                                (latest_joint_cmd_right_.joint_values[i] - jpos_right_.jVal[i]) * step / steps;
+                        }
+        
+                        // 发送指令
+                        int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
+                        int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
+                        RCLCPP_INFO(this->get_logger(),
+                            "[1Hz] 插补伺服指令:\n 左: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f,\n 右: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f\n"
+                            "当前左关节角度: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f,\n 当前右关节角度: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
                             jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
-                            jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6], ret_left, ret_right);
-                robot_->edg_send();
+                            jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6],
+                            jpos_left_.jVal[0], jpos_left_.jVal[1], jpos_left_.jVal[2], jpos_left_.jVal[3], jpos_left_.jVal[4], jpos_left_.jVal[5], jpos_left_.jVal[6],
+                            jpos_right_.jVal[0], jpos_right_.jVal[1], jpos_right_.jVal[2], jpos_right_.jVal[3], jpos_right_.jVal[4], jpos_right_.jVal[5], jpos_right_.jVal[6]
+                        );
+        
+                        // 发送数据
+                        robot_->edg_send();
+        
+                        // 等待下一个周期
+                        timespec dt;
+                        dt.tv_nsec = 1000000; // 1ms
+                        dt.tv_sec = 0;
+                        next = timespec_add(next, dt);
+                        clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+                    }
+                } else {
+                    // 差值小于等于 joint_interpolation_step_size_，直接发送
+                    for (int i = 0; i < AXIS_NUM; ++i) {
+                        jpos_left.jVal[i] = latest_joint_cmd_left_.joint_values[i];
+                        jpos_right.jVal[i] = latest_joint_cmd_right_.joint_values[i];
+                    }
+        
+                    int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
+                    // int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
+        
+                    RCLCPP_INFO(this->get_logger(),
+                                "[1Hz] 发送伺服指令:\n 左: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f,\n 右: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f\n"
+                                "当前左关节角度: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f,\n 当前右关节角度: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
+                                jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
+                                jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6],
+                                jpos_left_.jVal[0], jpos_left_.jVal[1], jpos_left_.jVal[2], jpos_left_.jVal[3], jpos_left_.jVal[4], jpos_left_.jVal[5], jpos_left_.jVal[6],
+                                jpos_right_.jVal[0], jpos_right_.jVal[1], jpos_right_.jVal[2], jpos_right_.jVal[3], jpos_right_.jVal[4], jpos_right_.jVal[5], jpos_right_.jVal[6]
+                            );
+        
+                    robot_->edg_send();
+                }
+        
+                has_data = true;
+                has_new_cmd_ = false; // 指令已处理
             }
-            timespec dt;
-            dt.tv_nsec = 8000000;
-            dt.tv_sec = 0;
-            next = timespec_add(next, dt);
-            clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+        
+            // 如果没有新指令，继续等待
+            if (!has_data) {
+                timespec dt;
+                dt.tv_nsec = 1000000; // 1ms
+                dt.tv_sec = 0;
+                next = timespec_add(next, dt);
+                clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+            }
         }
+        // while (rclcpp::ok() && running_joint_ )
+        // {
+        //     robot_->edg_recv(&next);
+        //     JointValue jpos_left, jpos_right;
+        //     bool has_data = false;
+        //     // 直接读取最新指令，无需加锁
+        //     if (has_new_cmd_)
+        //     {
+        //         memset(&jpos_left, 0, sizeof(jpos_left));
+        //         memset(&jpos_right, 0, sizeof(jpos_right));
+        //         for (int i = 0; i < AXIS_NUM; ++i)
+        //         {
+        //             jpos_left.jVal[i] = latest_joint_cmd_left_.joint_values[i];
+        //             jpos_right.jVal[i] = latest_joint_cmd_right_.joint_values[i];
+        //         }
+        //         has_data = true;
+        //         has_new_cmd_ = false; // 只下发一次，等新指令
+        //     }
+        //     if (has_data)
+        //     {
+        //         int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
+        //         int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
+        //         // int ret_right = 0;
+        //         RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, ret_left: %d, ret_right: %d",
+        //                     jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
+        //                     jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6], ret_left, ret_right);
+        //         robot_->edg_send();
+        //     }
+        //     timespec dt;
+        //     dt.tv_nsec = 8000000;
+        //     dt.tv_sec = 0;
+        //     next = timespec_add(next, dt);
+        //     clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
+        // }
 
 
 
@@ -710,6 +817,9 @@ private:
 
         timespec next;
         clock_gettime(CLOCK_REALTIME, &next);
+
+        
+
 
         while (rclcpp::ok() && running_pose_)
         {
@@ -839,7 +949,7 @@ private:
     double current_servo_vel_ = 15.0;
     double current_servo_acc_ = 8.0;
     double current_servo_jerk_ = 8.0;
-
+    double joint_interpolation_step_size_;
     JointValue jpos_left_;
     JointValue jpos_right_;
 };
