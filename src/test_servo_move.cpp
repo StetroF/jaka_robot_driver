@@ -95,11 +95,11 @@ int servoj_test(JAKAZuRobot &robot)
         robot.edg_stat_details(details);
     
         double t = (i - 0)/10000.0;
-        double kk = 20;
+        double kk = 1;
         jpos_cmd.jVal[0] = -(sin(kk*t)*30.0/180.0*3.14);
         jpos_cmd.jVal[1] = -(-cos(kk*t)*20.0/180.0*3.14 + 20.0/180.0*3.14);
         jpos_cmd.jVal[3] = -(-cos(kk*t)*10.0/180.0*3.14 + 10.0/180.0*3.14);
-        robot.edg_servo_j(0,&jpos_cmd,MoveMode::ABS);
+        // robot.edg_servo_j(0,&jpos_cmd,MoveMode::ABS);
         if(rob1_change_to_servo == true && rob2_start_k == 0)
         {
             rob2_start_k = i;
@@ -108,7 +108,7 @@ int servoj_test(JAKAZuRobot &robot)
         if(rob2_start_k && rob1_change_to_servo == true)
         {
             double tt = (i - rob2_start_k)/10000.0;
-            double kkk = 1;
+            double kkk = 15;
             printf("set robot2\n");
             jpos_cmd2.jVal[0] = -(sin(kkk*tt)*30.0/180.0*3.14);
             jpos_cmd2.jVal[1] = -(-cos(kkk*tt)*20.0/180.0*3.14 + 20.0/180.0*3.14);
@@ -155,7 +155,7 @@ int main()
     robot.motion_abort();
     robot.power_on();
     robot.enable_robot();
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    // std::this_thread::sleep_for(std::chrono::seconds(5));
     
     servoj_test(robot);
     // servop_test(robot);

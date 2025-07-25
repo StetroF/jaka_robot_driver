@@ -6,14 +6,16 @@ jaka_driver_node:
     robot_ip: "192.168.2.200"
     
     # 测试模式配置
-    servo_joint_test_mode: true
     servo_cart_test_mode: false
     
     # 伺服模式动态参数
-    servo_mode_enable: 1  # 1:开启, 0:关闭
+    servo_mode_enable: true  
     
     # 伺服运动参数 (仅在非伺服模式下可修改)
-    servo_joint_vel: 25.0    # 伺服关节速度
-    servo_joint_acc: 8.0     # 伺服关节加速度  
-    servo_joint_jerk: 8.0    # 伺服关节加加速度
+    servo_joint_vel: 360.0    # 伺服关节速度 #360
+    servo_joint_acc: 240.0     # 伺服关节加速度   #240
+    servo_joint_jerk: 720.0    # 伺服关节加加速度
     
+    # servo_joint_vel: 15.0    # 伺服关节速度 #360
+    # servo_joint_acc: 5.0     # 伺服关节加速度   #240
+    # servo_joint_jerk: 5.0    # 伺服关节加加速度

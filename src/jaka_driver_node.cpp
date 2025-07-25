@@ -16,7 +16,7 @@
 #include <atomic>
 #include <deque>
 #include "rcl_interfaces/msg/set_parameters_result.hpp"
-
+#include "jaka_robot_driver/jkerr_code.h"
 #define deg2rad(x) ((x) * M_PI / 180.0)
 #ifndef AXIS_NUM
 #define AXIS_NUM 7
@@ -35,11 +35,10 @@ public:
         // 初始化参数
 
         // 所有参数在开头声明
-        this->declare_parameter<int>("servo_mode_enable", 1); // 1:开, 0:关
-        this->declare_parameter<double>("servo_joint_vel", 15.0);
-        this->declare_parameter<double>("servo_joint_acc", 8.0);
-        this->declare_parameter<double>("servo_joint_jerk", 8.0);
-        this->declare_parameter<bool>("servo_joint_test_mode", true);
+        this->declare_parameter<bool>("servo_mode_enable", false); // 1:开, 0:关
+        this->declare_parameter<double>("servo_joint_vel", 360.0);
+        this->declare_parameter<double>("servo_joint_acc", 240.0);
+        this->declare_parameter<double>("servo_joint_jerk", 720.0);
         this->declare_parameter<bool>("servo_cart_test_mode", false);
 
 
@@ -49,6 +48,7 @@ public:
         RCLCPP_INFO(this->get_logger(), "伺服速度: %.3f, 伺服加速度: %.3f, 伺服加加速度: %.3f", current_servo_vel_, current_servo_acc_, current_servo_jerk_);
         
         robot_ = std::make_shared<JAKAZuRobot>();
+
 
         int ret = robot_->login_in("192.168.2.200"); // 示例 IP
         robot_->servo_move_use_none_filter();
@@ -77,6 +77,8 @@ public:
 
         // 使能机器人
         ret = robot_->enable_robot();
+
+  
         if (ret != ERR_SUCC)
         {
             RCLCPP_ERROR(this->get_logger(), "Enable robot failed. Code: %d", ret);
@@ -107,7 +109,7 @@ public:
 
 
         
-        bool servo_joint = this->get_parameter("servo_joint_test_mode").as_bool();
+        bool servo_joint = this->get_parameter("servo_mode_enable").as_bool();
         RCLCPP_INFO(this->get_logger(), "伺服模式: %d", servo_joint);
         if (servo_joint)
         {
@@ -214,7 +216,8 @@ public:
         error_check_thread_ = std::thread(&JakaDriverNode::error_monitor_loop, this);
         RCLCPP_INFO(this->get_logger(), "Monitor thread started.");
         RCLCPP_INFO(this->get_logger(), "JAKA ROS2 driver node started.");
-        // 断开连接
+
+        robot_->set_error_handler(JakaDriverNode::robot_error_callback);
         // robot_->login_out();
         // RCLCPP_INFO(this->get_logger(), "Logged out from robot.");
         // robot_->clear_error();
@@ -252,7 +255,7 @@ private:
         {
             if (param.get_name() == "servo_mode_enable")
             {
-                int mode = param.as_int();
+                bool mode = param.as_bool();
                 if (mode != current_servo_mode_)
                 {
                     int ret = robot_->servo_move_enable(mode, -1);
@@ -566,9 +569,7 @@ private:
         pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch);
 
 
-        robot_->servo_move_use_joint_NLF(360.0, 360.0, 720.0);
-        // robot_->servo_move_use_joint_MMF(20, 0.2, 0.4, 0.2); 
-        // robot_->servo_move_use_joint_LPF(0.25);
+        robot_->servo_move_use_joint_NLF(current_servo_vel_, current_servo_acc_, current_servo_jerk_);
 
         int ret = robot_->servo_move_enable(1, -1);
        
@@ -586,99 +587,6 @@ private:
         clock_gettime(CLOCK_REALTIME, &next);
 
 
-        // while (rclcpp::ok() && running_joint_) {
-        //     robot_->edg_recv(&next);
-        //     JointValue jpos_left, jpos_right;
-        //     bool has_data = false;
-        
-        //     // 检查是否有新指令
-        //     if (has_new_cmd_) {
-        //         memset(&jpos_left, 0, sizeof(jpos_left));
-        //         memset(&jpos_right, 0, sizeof(jpos_right));
-        
-        //         // 计算 left 和 right 的差值
-        //         double max_diff_left = 0.0;
-        //         double max_diff_right = 0.0;
-        
-        //         // 找到差值最大的关节
-        //         for (int i = 0; i < AXIS_NUM; ++i) {
-        //             double diff_left = std::abs(latest_joint_cmd_left_.joint_values[i] - jpos_left_.jVal[i]);
-        //             double diff_right = std::abs(latest_joint_cmd_right_.joint_values[i] - jpos_right_.jVal[i]);
-        
-        //             if (diff_left > max_diff_left) max_diff_left = diff_left;
-        //             if (diff_right > max_diff_right) max_diff_right = diff_right;
-        //         }
-        //         double step_size = 0.005;
-        //         // 如果差值大于 step_size，则拆分数据
-        //         if (max_diff_left > step_size || max_diff_right > step_size) {
-        //             // 计算需要拆分的步数
-        //             int steps = std::max(
-        //                 static_cast<int>(std::ceil(max_diff_left / step_size)),
-        //                 static_cast<int>(std::ceil(max_diff_right / step_size))
-        //             );
-        
-        //             // 逐步插值并发送指令
-        //             for (int step = 1; step <= steps; ++step) {
-        //                 // 插值计算当前步的关节值
-        //                 for (int i = 0; i < AXIS_NUM; ++i) {
-        //                     jpos_left.jVal[i] = jpos_left_.jVal[i] + 
-        //                         (latest_joint_cmd_left_.joint_values[i] - jpos_left_.jVal[i]) * step / steps;
-        //                     jpos_right.jVal[i] = jpos_right_.jVal[i] + 
-        //                         (latest_joint_cmd_right_.joint_values[i] - jpos_right_.jVal[i]) * step / steps;
-        //                 }
-        
-        //                 // 发送指令
-        //                 int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
-        //                 // int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
-        
-        //                 // 记录日志（可选）
-        //                 if (step == steps) {
-        //                     RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
-        //                                 jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
-        //                                 jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6]);
-        //                 }
-        
-        //                 // 发送数据
-        //                 robot_->edg_send();
-        
-        //                 // 等待下一个周期
-        //                 timespec dt;
-        //                 dt.tv_nsec = 1000000; // 1ms
-        //                 dt.tv_sec = 0;
-        //                 next = timespec_add(next, dt);
-        //                 clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
-        //             }
-        //         } else {
-        //             // 差值小于等于 step_size，直接发送
-        //             for (int i = 0; i < AXIS_NUM; ++i) {
-        //                 jpos_left.jVal[i] = latest_joint_cmd_left_.joint_values[i];
-        //                 jpos_right.jVal[i] = latest_joint_cmd_right_.joint_values[i];
-        //             }
-        
-        //             int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
-        //             // int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
-        
-        //             RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
-        //                         jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
-        //                         jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6]);
-        
-        //             robot_->edg_send();
-        //         }
-        
-        //         has_data = true;
-        //         has_new_cmd_ = false; // 指令已处理
-        //     }
-        
-        //     // 如果没有新指令，继续等待
-        //     if (!has_data) {
-        //         timespec dt;
-        //         dt.tv_nsec = 1000000; // 1ms
-        //         dt.tv_sec = 0;
-        //         next = timespec_add(next, dt);
-        //         clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
-        //     }
-        // }
-        
 
         while (rclcpp::ok() && running_joint_ )
         {
@@ -700,11 +608,11 @@ private:
             }
             if (has_data)
             {
-                int ret = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
-                // ret = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
-                RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f",
+                int ret_left = robot_->edg_servo_j(0, &jpos_left, MoveMode::ABS);
+                int ret_right = robot_->edg_servo_j(1, &jpos_right, MoveMode::ABS);
+                RCLCPP_INFO(this->get_logger(), "[1Hz] Sending servo cmd: left: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, right: %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, %.3f, ret_left: %d, ret_right: %d",
                             jpos_left.jVal[0], jpos_left.jVal[1], jpos_left.jVal[2], jpos_left.jVal[3], jpos_left.jVal[4], jpos_left.jVal[5], jpos_left.jVal[6],
-                            jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6]);
+                            jpos_right.jVal[0], jpos_right.jVal[1], jpos_right.jVal[2], jpos_right.jVal[3], jpos_right.jVal[4], jpos_right.jVal[5], jpos_right.jVal[6], ret_left, ret_right);
                 robot_->edg_send();
             }
             timespec dt;
@@ -842,7 +750,11 @@ private:
         }
         return result;
     }
-
+    static void robot_error_callback(int error_code)
+    {
+        std::string msg = get_jaka_error_msg(static_cast<uint32_t>(error_code));
+        RCLCPP_ERROR(rclcpp::get_logger("JakaDriverNode"), "robot has error: %d, %s", error_code, msg.c_str());
+    }
     void error_monitor_loop()
     {
         while (rclcpp::ok())
@@ -857,6 +769,22 @@ private:
                 {
                     RCLCPP_WARN(this->get_logger(), "robot has error: left = %s, right = %s",
                                 error[0] ? "true" : "false", error[1] ? "true" : "false");
+
+                    int left_on_limit, right_on_limit;
+                    robot_->robot_is_on_soft_limit(0, &left_on_limit);
+                    robot_->robot_is_on_soft_limit(1, &right_on_limit);
+                    BOOL in_collision = 0; 
+                    robot_->is_in_collision(&in_collision);
+                    if (left_on_limit || right_on_limit)
+                    {
+                        //打印的时候转化成bool
+                        RCLCPP_WARN(this->get_logger(), "robot is on soft limit ,Left = %d, Right = %d", bool(left_on_limit), bool(right_on_limit));
+                    }
+                    if (in_collision)
+                    {
+                        RCLCPP_WARN(this->get_logger(), "robot is in collision");
+                    }
+                    
                 }
                 else
                 {
@@ -868,7 +796,7 @@ private:
             ret = robot_->get_last_error(&code);
             if (ret == ERR_SUCC && code.code != 0)
             {
-                RCLCPP_ERROR(this->get_logger(), "Last error: code = 0x%x, message = %s", code.code, code.message);
+                RCLCPP_ERROR(this->get_logger(), "Last error: code = 0x%x, message = %s", code.code, get_jaka_error_msg(code.code).c_str());
                 std::this_thread::sleep_for(std::chrono::seconds(1));
                 robot_->clear_error();
                 RCLCPP_INFO(this->get_logger(), "clear_error() called.");
