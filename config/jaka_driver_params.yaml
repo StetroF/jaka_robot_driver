@@ -12,9 +12,9 @@ jaka_driver_node:
     servo_mode_enable: true  
     
     # 伺服运动参数 (仅在非伺服模式下可修改)
-    servo_joint_vel: 360.0    # 伺服关节速度 #360
-    servo_joint_acc: 240.0     # 伺服关节加速度   #240
+    servo_joint_vel: 120.0    # 伺服关节速度 #360
+    servo_joint_acc: 180.0     # 伺服关节加速度   #240
     servo_joint_jerk: 720.0    # 伺服关节加加速度
     
     # 关节插补步长
-    joint_interpolation_step_size: 0.05 ##当接受到的伺服控制的关节角度差过大时，根据这个进行插补
+    # joint_interpolation_step_size: 0.08 ##当接受到的伺服控制的关节角度差过大时，根据这个进行插补
