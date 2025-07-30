@@ -40,13 +40,11 @@ public:
         this->declare_parameter<double>("servo_joint_acc", 240.0);
         this->declare_parameter<double>("servo_joint_jerk", 720.0);
         this->declare_parameter<bool>("servo_cart_test_mode", false);
-        this->declare_parameter<double>("joint_interpolation_step_size", 0.05);
 
         current_servo_vel_ = this->get_parameter("servo_joint_vel").as_double();
         current_servo_acc_ = this->get_parameter("servo_joint_acc").as_double();
         current_servo_jerk_ = this->get_parameter("servo_joint_jerk").as_double();
-        joint_interpolation_step_size_ = this->get_parameter("joint_interpolation_step_size").as_double();
-        RCLCPP_INFO(this->get_logger(), "伺服速度: %.3f, 伺服加速度: %.3f, 伺服加加速度: %.3f, 关节插补步长: %.3f", current_servo_vel_, current_servo_acc_, current_servo_jerk_, joint_interpolation_step_size_);
+        RCLCPP_INFO(this->get_logger(), "伺服速度: %.3f, 伺服加速度: %.3f, 伺服加加速度: %.3f", current_servo_vel_, current_servo_acc_, current_servo_jerk_);
         
         robot_ = std::make_shared<JAKAZuRobot>();
 
@@ -587,9 +585,13 @@ private:
         sch.sched_priority = 90;
         pthread_setschedparam(pthread_self(), SCHED_FIFO, &sch);
 
+        // auto set_result = robot_->servo_move_use_joint_LPF(0.1);
+        auto set_result = robot_->servo_move_use_joint_NLF(current_servo_vel_, current_servo_acc_, current_servo_jerk_);
+        RCLCPP_INFO(this->get_logger(), "设置滤波返回, ret = %d", set_result);
 
-        robot_->servo_move_use_joint_NLF(current_servo_vel_, current_servo_acc_, current_servo_jerk_);
 
+        // robot_->servo_move_use_none_filter();
+        std::this_thread::sleep_for(std::chrono::seconds(2));   
         int ret = robot_->servo_move_enable(1, -1);
        
         if (ret != 0)
@@ -746,7 +748,7 @@ private:
                 robot_->edg_send();
             }
             timespec dt;
-            dt.tv_nsec = 5000000;
+            dt.tv_nsec = 8000000;
             dt.tv_sec = 0;
             next = timespec_add(next, dt);
             clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &next, NULL);
@@ -971,7 +973,6 @@ private:
     double current_servo_vel_ = 15.0;
     double current_servo_acc_ = 8.0;
     double current_servo_jerk_ = 8.0;
-    double joint_interpolation_step_size_;
     JointValue jpos_left_;
     JointValue jpos_right_;
 };
