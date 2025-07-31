@@ -12,6 +12,8 @@ find_package(std_msgs REQUIRED)
 find_package(jaka_robot_interfaces REQUIRED)
 find_package(std_srvs REQUIRED)
 
+
+
 # 公共头文件路径
 include_directories(
   include
@@ -40,7 +42,6 @@ set(ROS2_DEPS
   std_srvs
 )
 
-# 定义函数：添加可执行文件并配置
 function(add_jaka_executable target_name source_file)
   add_executable(${target_name} ${source_file})
   target_link_libraries(${target_name} ${COMMON_LIBS})
@@ -52,9 +53,22 @@ function(add_jaka_executable target_name source_file)
   install(TARGETS ${target_name} DESTINATION lib/${PROJECT_NAME})
 endfunction()
 
+
+function(add_jaka_python_executable target_file source_file)
+  install(PROGRAMS
+    ${source_file}
+    DESTINATION lib/${PROJECT_NAME}
+    RENAME ${target_file}
+  )
+endfunction() 
+
+
+
 # 添加节点
 add_jaka_executable(jaka_driver_node src/jaka_driver_node.cpp)
 add_jaka_executable(test_servo_move src/test_servo_move.cpp)
+add_jaka_python_executable(example_python_script jaka_robot_driver/example_python_script.py)
+add_jaka_python_executable(jaka_status_monitor jaka_robot_driver/jaka_status_monitor.py)
 # 安装头文件
 install(DIRECTORY include/ DESTINATION include/)
 
@@ -69,5 +83,8 @@ install(DIRECTORY
   config
   DESTINATION share/${PROJECT_NAME}
 )
+
+
+
 
 ament_package()
