@@ -111,33 +111,34 @@ public:
         bool servo_joint = this->get_parameter("servo_mode_enable").as_bool();
         current_servo_mode_ = static_cast<int>(servo_joint);
         RCLCPP_INFO(this->get_logger(), "伺服模式: %d", servo_joint);
+        JointValue init_pos[2];
+        init_pos[0].jVal[0] = 0.16615534478986016;
+        init_pos[0].jVal[1] = 1.6496153958149606;
+        init_pos[0].jVal[2] = -1.4933560678839082;
+        init_pos[0].jVal[3] = -1.1141658345956202;
+        init_pos[0].jVal[4] = -0.007435102613495843;
+        init_pos[0].jVal[5] = -1.234890258956068;
+        init_pos[0].jVal[6] = -1.0155896384429803;
+        
+        init_pos[1].jVal[0] = 0.03220132469929538;
+        init_pos[1].jVal[1] = 1.6494757694748008;
+        init_pos[1].jVal[2] = 1.5354010495644514;
+        init_pos[1].jVal[3] = -1.561109749446328;
+        init_pos[1].jVal[4] = -0.06119124357492119;
+        init_pos[1].jVal[5] = 0.8771675754673102;
+        init_pos[1].jVal[6] = 0.5004208031318141;
+
+        // memset(&init_pos, 0, sizeof(init_pos));
+        //
+        double v[] = {deg2rad(30), deg2rad(30)};
+        double a[] = {deg2rad(150), deg2rad(150)};
+        MoveMode mode[] = {MoveMode::ABS, MoveMode::ABS};
+        robot_->robot_run_multi_movj(DUAL, mode, true, init_pos, v, a);
+        RCLCPP_INFO(this->get_logger(), "回到初始位置.");
+
         if (servo_joint)
         {
             // JointValue init_pos = {{0.33,1.52,-1.07,-1.2,-0.33,-1.14,-0.61},{-0.8,1.17,-1.09,0.37,-0.47,-1.64,-1.85}};
-            JointValue init_pos[2];
-            init_pos[0].jVal[0] = 0.16615534478986016;
-            init_pos[0].jVal[1] = 1.6496153958149606;
-            init_pos[0].jVal[2] = -1.4933560678839082;
-            init_pos[0].jVal[3] = -1.1141658345956202;
-            init_pos[0].jVal[4] = -0.007435102613495843;
-            init_pos[0].jVal[5] = -1.234890258956068;
-            init_pos[0].jVal[6] = -1.0155896384429803;
-            
-            init_pos[1].jVal[0] = 0.03220132469929538;
-            init_pos[1].jVal[1] = 1.6494757694748008;
-            init_pos[1].jVal[2] = 1.5354010495644514;
-            init_pos[1].jVal[3] = -1.561109749446328;
-            init_pos[1].jVal[4] = -0.06119124357492119;
-            init_pos[1].jVal[5] = 0.8771675754673102;
-            init_pos[1].jVal[6] = 0.5004208031318141;
-
-            // memset(&init_pos, 0, sizeof(init_pos));
-            //
-            double v[] = {deg2rad(30), deg2rad(30)};
-            double a[] = {deg2rad(150), deg2rad(150)};
-            MoveMode mode[] = {MoveMode::ABS, MoveMode::ABS};
-            robot_->robot_run_multi_movj(DUAL, mode, true, init_pos, v, a);
-            RCLCPP_INFO(this->get_logger(), "伺服模式下回到初始位置.");
 
             servo_thread_ = std::thread(&JakaDriverNode::servo_loop, this);
         }
